@@ -1,0 +1,379 @@
+// Prisma schema for "انتيفات بلس للنقليات" Fleet Management System
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== Enums ====================
+
+enum Role {
+  ADMIN // مدير النظام
+  OPS_MANAGER // مدير التشغيل
+  ACCOUNTANT // المحاسب
+  MAINTENANCE // مسؤول الصيانة
+  DRIVER // السائق
+}
+
+enum TruckStatus {
+  AVAILABLE // متاحة
+  ON_TRIP // في رحلة
+  MAINTENANCE // تحت الصيانة
+  STOPPED // متوقفة
+}
+
+enum DriverStatus {
+  AVAILABLE // متاح
+  ON_TRIP // في رحلة
+  LEAVE // إجازة
+  SUSPENDED // موقوف
+}
+
+enum TripStatus {
+  DRAFT // مسودة
+  PENDING_ACCEPTANCE // بانتظار قبول السائق
+  ACCEPTED // مقبولة
+  TO_PICKUP // في الطريق إلى التحميل
+  LOADED // تم التحميل
+  TO_DROPOFF // في الطريق إلى التسليم
+  DELIVERED // تم التسليم
+  CANCELLED // ملغاة
+}
+
+enum MaintenanceStatus {
+  NEW // جديد
+  INSPECTING // تحت الفحص
+  IN_PROGRESS // جاري الإصلاح
+  COMPLETED // مكتمل
+  CANCELLED // ملغى
+}
+
+enum MaintenancePriority {
+  LOW // منخفضة
+  MEDIUM // متوسطة
+  HIGH // عالية
+  URGENT // عاجلة
+}
+
+enum FinanceType {
+  REVENUE // إيراد
+  EXPENSE // مصروف
+}
+
+enum FinanceCategory {
+  TRIP_REVENUE // إيراد رحلة
+  FUEL // وقود
+  MAINTENANCE // صيانة
+  DRIVER_PAYROLL // مستحقات سائقين
+  FINES // مخالفات
+  ADMIN // مصروفات إدارية
+  OTHER // أخرى
+}
+
+enum AlertType {
+  DRIVER_LICENSE_EXPIRY
+  TRUCK_FORM_EXPIRY
+  TRUCK_INSURANCE_EXPIRY
+  TRUCK_INSPECTION_EXPIRY
+  TRIP_DELAYED
+  TRUCK_MAINTENANCE_NEEDED
+  INVOICE_DUE
+}
+
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+// ==================== Models ====================
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role
+  phone        String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  driver             Driver?
+  createdTrips       Trip[]               @relation("TripCreatedBy")
+  tripStatusChanges  TripStatusHistory[]
+  maintenanceCreated MaintenanceRequest[] @relation("MaintenanceCreatedBy")
+  financeCreated     FinanceTransaction[]
+  activityLogs       ActivityLog[]
+
+  @@index([role])
+}
+
+model Truck {
+  id             String      @id @default(cuid())
+  internalNumber String      @unique
+  plateNumber    String      @unique
+  truckType      String
+  model          String
+  year           Int
+  capacityTons   Decimal     @db.Decimal(10, 2)
+  chassisNumber  String      @unique
+  odometerKm     Int         @default(0)
+  status         TruckStatus @default(AVAILABLE)
+
+  formExpiry       DateTime
+  insuranceExpiry  DateTime
+  inspectionExpiry DateTime
+
+  imageUrl String?
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignedDriver      Driver?
+  trips               Trip[]
+  maintenanceRequests MaintenanceRequest[]
+  financeTransactions FinanceTransaction[]
+
+  @@index([status])
+  @@index([formExpiry])
+  @@index([insuranceExpiry])
+  @@index([inspectionExpiry])
+}
+
+model Driver {
+  id              String       @id @default(cuid())
+  name            String
+  phone           String       @unique
+  nationalId      String       @unique
+  nationality     String
+  licenseNumber   String       @unique
+  licenseExpiry   DateTime
+  status          DriverStatus @default(AVAILABLE)
+  rating          Decimal      @default(5.0) @db.Decimal(3, 2)
+  violationsCount Int          @default(0)
+  notes           String?
+
+  truckId String? @unique
+  truck   Truck?  @relation(fields: [truckId], references: [id])
+
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trips               Trip[]
+  reportedMaintenance MaintenanceRequest[] @relation("MaintenanceReportedByDriver")
+  financeTransactions FinanceTransaction[]
+  statusChanges       TripStatusHistory[]
+
+  @@index([status])
+  @@index([licenseExpiry])
+}
+
+model Customer {
+  id                 String   @id @default(cuid())
+  name               String
+  commercialRegister String?
+  taxNumber          String?
+  contactName        String?
+  phone              String
+  email              String?
+  address            String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  trips               Trip[]
+  financeTransactions FinanceTransaction[]
+
+  @@index([name])
+}
+
+model Trip {
+  id         String @id @default(cuid())
+  tripNumber String @unique
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  originCity         String
+  originAddress      String?
+  destinationCity    String
+  destinationAddress String?
+
+  pickupDateTime       DateTime
+  expectedDeliveryDate DateTime
+
+  cargoType       String
+  cargoWeightTons Decimal @db.Decimal(10, 2)
+  value           Decimal @db.Decimal(12, 2)
+
+  driverId String?
+  driver   Driver? @relation(fields: [driverId], references: [id])
+
+  truckId String?
+  truck   Truck?  @relation(fields: [truckId], references: [id])
+
+  status TripStatus @default(DRAFT)
+
+  notes              String?
+  proofOfDeliveryUrl String?
+
+  actualStartAt DateTime?
+  actualEndAt   DateTime?
+
+  createdById String
+  createdBy   User   @relation("TripCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  statusHistory       TripStatusHistory[]
+  financeTransactions FinanceTransaction[]
+
+  @@index([status])
+  @@index([driverId])
+  @@index([truckId])
+  @@index([customerId])
+  @@index([pickupDateTime])
+  @@index([expectedDeliveryDate])
+}
+
+model TripStatusHistory {
+  id                String      @id @default(cuid())
+  tripId            String
+  trip              Trip        @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  fromStatus        TripStatus?
+  toStatus          TripStatus
+  changedById       String?
+  changedBy         User?       @relation(fields: [changedById], references: [id])
+  changedByDriverId String?
+  changedByDriver   Driver?     @relation(fields: [changedByDriverId], references: [id])
+  note              String?
+  changedAt         DateTime    @default(now())
+
+  @@index([tripId])
+}
+
+model MaintenanceRequest {
+  id            String @id @default(cuid())
+  requestNumber String @unique
+
+  truckId String
+  truck   Truck  @relation(fields: [truckId], references: [id])
+
+  faultType   String
+  description String
+  priority    MaintenancePriority @default(MEDIUM)
+
+  reportedAt DateTime @default(now())
+
+  reportedByDriverId String?
+  reportedByDriver   Driver? @relation("MaintenanceReportedByDriver", fields: [reportedByDriverId], references: [id])
+
+  serviceCenter String?
+  cost          Decimal?          @db.Decimal(12, 2)
+  status        MaintenanceStatus @default(NEW)
+
+  nextMaintenanceDate DateTime?
+  odometerAtService   Int?
+  completedAt         DateTime?
+
+  createdById String
+  createdBy   User   @relation("MaintenanceCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([truckId])
+  @@index([status])
+  @@index([reportedAt])
+}
+
+model FinanceTransaction {
+  id          String          @id @default(cuid())
+  type        FinanceType
+  category    FinanceCategory
+  amount      Decimal         @db.Decimal(12, 2)
+  currency    String          @default("SAR")
+  description String
+  date        DateTime
+
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+
+  truckId String?
+  truck   Truck?  @relation(fields: [truckId], references: [id])
+
+  driverId String?
+  driver   Driver? @relation(fields: [driverId], references: [id])
+
+  tripId String?
+  trip   Trip?   @relation(fields: [tripId], references: [id])
+
+  isPaid  Boolean   @default(true)
+  dueDate DateTime?
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([category])
+  @@index([date])
+  @@index([isPaid])
+  @@index([customerId])
+  @@index([truckId])
+  @@index([driverId])
+}
+
+model Alert {
+  id       String        @id @default(cuid())
+  type     AlertType
+  severity AlertSeverity
+  title    String
+  message  String
+
+  relatedTruckId   String?
+  relatedDriverId  String?
+  relatedTripId    String?
+  relatedFinanceId String?
+
+  isRead     Boolean   @default(false)
+  isResolved Boolean   @default(false)
+  dueDate    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isResolved])
+  @@index([type])
+  @@index([severity])
+}
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  userName    String
+  action      String
+  entityType  String
+  entityId    String?
+  oldValue    Json?
+  newValue    Json?
+  description String
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@index([userId])
+}
